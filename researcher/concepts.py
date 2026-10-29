@@ -95,21 +95,21 @@ class ConceptGraph:
                 documents=[doc['document'] for doc in self.cluster_docs[cluster_id]]
             )
         
-        # Add edges based on inter-cluster similarity
+        # Add edges based on inter-cluster similarity.
+        # Compute all centroid-to-centroid similarities in ONE call; calling
+        # cosine_similarity() once per pair of clusters is far slower.
         cluster_ids = list(self.cluster_centroids.keys())
-        for i in range(len(cluster_ids)):
-            for j in range(i + 1, len(cluster_ids)):
-                id1, id2 = cluster_ids[i], cluster_ids[j]
-                
-                # Compute similarity between centroids
-                sim = cosine_similarity(
-                    [self.cluster_centroids[id1]],
-                    [self.cluster_centroids[id2]]
-                )[0][0]
+        if len(cluster_ids) > 1:
+            centroids = np.vstack([self.cluster_centroids[c] for c in cluster_ids])
+            similarity = cosine_similarity(centroids)
 
-                if sim >= edge_threshold:
-                    self.graph.add_edge(id1, id2, weight=float(sim))
-        
+            # Each pair once: the upper triangle, excluding the diagonal
+            rows, cols = np.triu_indices(len(cluster_ids), k=1)
+            keep = similarity[rows, cols] >= edge_threshold
+            for i, j in zip(rows[keep], cols[keep]):
+                self.graph.add_edge(cluster_ids[i], cluster_ids[j],
+                                    weight=float(similarity[i, j]))
+
         return self.graph
     
     def get_related_concepts(self, cluster_id):
@@ -169,7 +169,6 @@ class ConceptGraph:
             "animate": True,
         }
  
-        print("Elements:\n", elements)
         return cytoscape(elements, stylesheet, layout=layout, key="graph", 
             min_zoom=1/2, max_zoom=2, height="400px")
     
@@ -241,19 +240,9 @@ class ConceptGraph:
         self.cluster_themes[cluster_id] = response
 
         return response
-    
-def main():
-    st.set_page_config(page_title="Concepts", layout="wide")
-    st.title("Concepts")
-    
-    # Initialize session state
-    if 'concept_graph' not in st.session_state:
-        st.session_state.concept_graph = None
-    
-    # Get documents
-    st.sidebar.header("📄 Documents")
-    search_terms = st.sidebar.text_input("Search terms (optional)", "")
 
+@st.cache_data()
+def search_papers(search_terms):
     db = TinyDB(DATABASE)
     papers = [doc for doc in db.table("metadata").search(
         (where("type") == "research paper") | (where("type") == "conference paper"))]
@@ -266,6 +255,23 @@ def main():
         not doc["problem"].startswith("The abstract does not specify")]
     documents = [doc["problem"] for doc in abstracts]
     sources = [doc["id"] for doc in abstracts]
+    db.close()
+
+    return documents, sources
+
+def main():
+    st.set_page_config(page_title="Concepts", layout="wide")
+    st.title("Concepts")
+    
+    # Initialize session state
+    if 'concept_graph' not in st.session_state:
+        st.session_state.concept_graph = None
+    
+    # Get documents
+    st.sidebar.header("📄 Documents")
+    search_terms = st.sidebar.text_input("Search terms (optional)", "")
+
+    documents, sources = search_papers(search_terms)
 
     # Sidebar for parameters
     st.sidebar.header("⚙️ Parameters")
