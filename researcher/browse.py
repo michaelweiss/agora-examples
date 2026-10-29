@@ -1,15 +1,11 @@
 import streamlit as st
 from tinydb import TinyDB, where
-import re
-import json
 import os
 
 DATABASE = "db/papers.json"
 
-def search_papers(_db, search_terms=""):
+def search_papers(search_terms=""):
     """Filter papers using TinyDB API by search term"""
-    table = _db.table("metadata")
-
     # Split search terms by whitespace and apply AND logic
     search_words = search_terms.split()
 
@@ -38,7 +34,13 @@ def search_papers(_db, search_terms=""):
     for cond in conditions[1:]:
         final_condition = final_condition & cond
 
-    return table.search(final_condition)
+    # Search the metadata table
+    db = TinyDB(DATABASE)
+    try:
+        table = db.table("metadata")
+        return table.search(final_condition)
+    finally:
+        db.close()
 
 @st.cache_resource()
 def load_abstracts(path, mtime):
@@ -95,6 +97,7 @@ def display_paper(paper):
             display_elements(paper)
 
 def display_save_status_and_title(paper):
+    """Display the save status checkbox and title for a paper"""
     paper_id = paper.get('id')
     paper_title = f"{paper.get('title', 'Untitled')}"
     is_saved = paper_id in st.session_state.saved_search_results
@@ -157,6 +160,14 @@ def display_saved_papers():
     else:
         st.sidebar.info("None")
 
+def export_elements(paper):
+    """Generate export data for the abstract elements of a paper"""
+    lines = []
+    for key in ['problem', 'problem owner', 'approach', 'solution', 'consequences']:
+        value = paper.get(key, 'N/A')
+        lines.append(f"{key.replace('_', ' ').title()}: {value}")
+    return lines
+
 def export_saved_papers():
     """Generate export data for saved papers"""
     if not st.session_state.saved_search_results:
@@ -165,22 +176,8 @@ def export_saved_papers():
     # Create a simple text export with paper titles
     export_lines = []
     for i, (paper_id, paper_data) in enumerate(st.session_state.saved_search_results.items(), 1):
-        title = paper_data.get('title', 'Untitled')
-        authors = paper_data.get('authors', [])
-        authors_str = get_authors(paper_data) if authors else 'Unknown authors'
-        problem = paper_data.get('problem', 'N/A')
-        problem_owner = paper_data.get('problem owner', 'N/A')
-        approach = paper_data.get('approach', 'N/A')
-        solution = paper_data.get('solution', 'N/A')
-        consequences = paper_data.get('consequences', 'N/A')
         export_lines.append(f"# {paper_id}")
-        export_lines.append(f"Title: {title}")
-        # export_lines.append(f"   Authors: {authors_str}")
-        export_lines.append(f"Problem: {problem}")
-        export_lines.append(f"Problem Owner: {problem_owner}")
-        export_lines.append(f"Approach: {approach}")
-        export_lines.append(f"Solution: {solution}")
-        export_lines.append(f"Consequences: {consequences}")
+        export_lines.extend(export_elements(paper_data))
         export_lines.append("")
     
     return "\n".join(export_lines)
@@ -192,37 +189,31 @@ def app():
     if 'saved_search_results' not in st.session_state:
         st.session_state.saved_search_results = {}
     
-    # Load data
-    db = TinyDB(DATABASE)
-    all_papers = db.table("metadata").all()
-
     # Search interface
     search_terms = st.sidebar.text_input("Search papers:", placeholder="Enter search terms...")
 
     # Display saved papers in sidebar
     display_saved_papers()
 
-    # Filter papers
-    filtered_papers = search_papers(db, search_terms)
+    with st.spinner("Searching papers..."):
+        # Filter papers
+        filtered_papers = search_papers(search_terms)
 
-    # Merge with abstract elements
-    for paper in filtered_papers:
-        abstract_data = get_abstract(paper.get("id"))
-        if abstract_data:
-            paper.update(abstract_data)
-    
-    # Results summary
-    st.markdown(f"**Found {len(filtered_papers)} papers** (out of {len(all_papers)} total)")
-    
-    # Display papers
-    if filtered_papers:
+        # Merge with abstract elements
         for paper in filtered_papers:
-            display_paper(paper)
-    else:
-        if search_terms.strip():
-            st.info("No papers found matching your search criteria.")
+            abstract_data = get_abstract(paper.get("id"))
+            if abstract_data:
+                paper.update(abstract_data)
+        
+        # Display papers
+        if filtered_papers:
+            for paper in filtered_papers:
+                display_paper(paper)
         else:
-            st.info("No search criteria provided.")
+            if search_terms.strip():
+                st.info("No papers found matching your search criteria.")
+            else:
+                st.info("No search criteria provided.")
 
 if __name__ == "__main__":
     app()
