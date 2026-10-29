@@ -24,21 +24,14 @@ def search_papers(search_terms=""):
     finally:
         db.close()
 
-@st.cache_resource()
-def load_abstracts(mtime):
-    """Read the abstracts table ONCE and index it by paper id"""
+def get_abstracts(paper_ids):
+    """Fetch the abstracts for multiple papers"""
     db = TinyDB(DATABASE)
     try:
-        return { row.get("id"): row for row in db.table("abstracts").all() }
+        rows = db.table("abstracts").search(where("id").one_of(set(paper_ids)))
     finally:
         db.close()
-
-def get_abstract(paper_id):
-    """Retrieve abstract elements for a given paper"""
-    # TinyDB re-parses the whole JSON file on every query. Instead, load all 
-    # abstracts once and look up the paper by its id.
-    abstracts = load_abstracts(os.path.getmtime(DATABASE))
-    return abstracts.get(paper_id)
+    return {row["id"]: row for row in rows}
 
 def get_authors(paper):
     """Helper function to format authors list"""
@@ -208,9 +201,11 @@ def app():
         # Display papers, one page at a time
         if filtered_papers:
             query = " ".join(search_terms.lower().split())
-            for paper in paginate(filtered_papers, query):
+            papers_on_page = paginate(filtered_papers, query)
+            abstracts = get_abstracts(p["id"] for p in papers_on_page)
+            for paper in papers_on_page:
                 # Merge with abstract elements (only for papers being shown)
-                abstract_data = get_abstract(paper.get("id"))
+                abstract_data = abstracts.get(paper.get("id"))
                 if abstract_data:
                     paper.update(abstract_data)
                 display_paper(paper)
