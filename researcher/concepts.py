@@ -1,7 +1,7 @@
 import networkx as nx
 import numpy as np
 
-from sklearn.cluster import DBSCAN, HDBSCAN
+from sklearn.cluster import HDBSCAN
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import PCA
 
@@ -39,15 +39,10 @@ class ConceptGraph:
         self.embeddings.extend(embeddings)
         self.sources.extend(sources)
 
-    def cluster_documents(self, model = "DBSCAN", params = {"eps": 0.3, "min_samples": 2}):
-        """Cluster documents using DBSCAN or HDBSCAN."""
-        if model == "DBSCAN":
-            clustering = DBSCAN(eps=params["eps"], min_samples=params["min_samples"], metric='euclidean')
-        elif model == "HDBSCAN":
-            clustering = HDBSCAN(min_cluster_size=params["min_cluster_size"], min_samples=params["min_samples"], metric='euclidean')
-        else:
-            raise ValueError(f"Unknown clustering model: {model}")
-
+    def cluster_documents(self, min_cluster_size, min_samples):
+        """Cluster documents using HDBSCAN."""
+        clustering = HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples,
+            metric='euclidean', copy=True)
         self.clusters = clustering.fit_predict(self.embeddings)
         
         # Group documents by cluster
@@ -259,6 +254,15 @@ def search_papers(search_terms):
 
     return documents, sources
 
+def default_min_cluster_size(n):
+    """Default minimum cluster size for n documents.
+
+    Scales with sqrt(n). Since the dataset is heterogeneous, keep this low:
+    for ~1000 documents, a min_cluster_size of ~5 is reasonable.
+    min_samples defaults to about 1/2 of min_cluster_size.
+    """
+    return max(2, min(10, int(np.sqrt(n) / 6)))
+
 def main():
     st.set_page_config(page_title="Concepts", layout="wide")
     st.title("Concepts")
@@ -276,45 +280,22 @@ def main():
     # Sidebar for parameters
     st.sidebar.header("⚙️ Parameters")
 
-    # Clustering model choice
-    clustering_model = st.sidebar.selectbox(
-        "Clustering Model", ["HDBSCAN", "DBSCAN"]
-    )
-    
     n_docs = len(documents)
+    default_cluster_size = default_min_cluster_size(n_docs)
 
-    if clustering_model == "DBSCAN":
-        eps = st.sidebar.slider(
-            "EPS (for DBSCAN)",
-            min_value=0.05,
-            max_value=0.8,
-            value=0.3,
-            step=0.05,
-            help="Maximum distance between samples for clustering"
-        )
-        
-    elif clustering_model == "HDBSCAN":
-        # Scale min_cluster_size based on sqrt(number of documents)
-        # Since the dataset is heterogeneous, keep this low
-        # For ~1000 documents, a min_cluster_size of ~5 is reasonable
-        # min_samples should be ~1/2 of min_cluster_size
-    
-        def default_min_cluster_size(n):
-            return max(2, min(10, int(np.sqrt(n) / 6)))
-    
-        min_cluster_size = st.sidebar.slider(
-            "Min Cluster Size (for HDBSCAN)",
-            min_value=2,
-            max_value=15,
-            value=default_min_cluster_size(n_docs),
-            help="Minimum size of clusters"
-        )
+    min_cluster_size = st.sidebar.slider(
+        "Min Cluster Size",
+        min_value=2,
+        max_value=15,
+        value=default_cluster_size,
+        help="Minimum size of clusters"
+    )
 
     min_samples = st.sidebar.slider(
         "Min Samples",
         min_value=1,
         max_value=5,
-        value=max(1, min(5, default_min_cluster_size(n_docs) // 2)),
+        value=max(1, min(5, default_cluster_size // 2)),
         help="Minimum samples in a neighborhood"
     )
     
@@ -349,12 +330,8 @@ def main():
                 cg.add_documents(documents, embeddings, sources)
 
                 with st.spinner("Clustering documents..."):
-                    if clustering_model == "DBSCAN":
-                        params={"eps": eps, "min_samples": min_samples}
-                    elif clustering_model == "HDBSCAN":
-                        min_samples = min(min_samples, n_docs)  # clamp min_samples to number of documents
-                        params={"min_cluster_size": min_cluster_size, "min_samples": min_samples}
-                    cg.cluster_documents(clustering_model, params)
+                    # HDBSCAN needs min_samples <= number of documents
+                    cg.cluster_documents(min_cluster_size, min(min_samples, n_docs))
 
                 with st.spinner("Building graph..."):
                     cg.build_graph(edge_threshold=edge_threshold)
