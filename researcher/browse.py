@@ -6,71 +6,38 @@ import os
 
 DATABASE = "db/papers.json"
 
-def get_all_keywords(papers):
-    """Extract all unique keywords from papers"""
-    keywords = set()
-    for paper in papers:
-        for keyword in paper.get('keywords', []):
-            keywords.add(keyword.lower())
-    return sorted(list(keywords))
-
-def search_papers(_db, search_terms="", selected_keywords=None):
-    """Filter papers using TinyDB API by search term and keywords"""
-    if selected_keywords is None:
-        selected_keywords = []
-    
+def search_papers(_db, search_terms=""):
+    """Filter papers using TinyDB API by search term"""
     table = _db.table("metadata")
 
-    # If no search criteria, don't return any papers
-    if not search_terms and not selected_keywords:
+    # Split search terms by whitespace and apply AND logic
+    search_words = search_terms.split()
+
+    # If no search terms, don't return any papers
+    if not search_words:
         return []
 
-    # Build search conditions
+    # Build search conditions: one condition per word
     conditions = []
-    
-    # Text search across multiple fields using TinyDB where conditions
-    if search_terms:
-        # Split search terms by whitespace and apply AND logic
-        search_words = search_terms.strip().split()
-        if search_words:
-            # For each word, create conditions to check all fields
-            for word in search_words:
-                word_lower = word.lower()
-                word_conditions = [
-                    where('id').test(lambda x, w=word_lower: w in str(x).lower()),
-                    where('title').test(lambda x, w=word_lower: w in str(x).lower()),
-                    where('authors').test(lambda x, w=word_lower: w in str(x).lower()),
-                    where('abstract').test(lambda x, w=word_lower: w in str(x).lower()),
-                ]
-                # Combine with OR logic for this word (word can be found in any field)
-                word_condition = word_conditions[0]
-                for cond in word_conditions[1:]:
-                    word_condition = word_condition | cond
-                conditions.append(word_condition)
-    
-    # Keyword filtering using TinyDB with OR logic
-    if selected_keywords:
-        # Any of the selected keywords must be present (OR logic)
-        keyword_conditions = []
-        for keyword in selected_keywords:
-            keyword_conditions.append(
-                where('keywords').test(lambda x, kw=keyword: kw.lower() in [k.lower() for k in x])
-            )
-        # Combine keyword conditions with OR logic
-        if keyword_conditions:
-            keyword_condition = keyword_conditions[0]
-            for cond in keyword_conditions[1:]:
-                keyword_condition = keyword_condition | cond
-            conditions.append(keyword_condition)
-    
-    # Combine all conditions with AND logic
-    if len(conditions) == 1:
-        final_condition = conditions[0]
-    else:
-        final_condition = conditions[0]
-        for cond in conditions[1:]:
-            final_condition = final_condition & cond
-    
+    for word in search_words:
+        word_lower = word.lower()
+        word_conditions = [
+            where('id').test(lambda x, w=word_lower: w in str(x).lower()),
+            where('title').test(lambda x, w=word_lower: w in str(x).lower()),
+            where('authors').test(lambda x, w=word_lower: w in str(x).lower()),
+            where('abstract').test(lambda x, w=word_lower: w in str(x).lower()),
+        ]
+        # Combine with OR logic for this word (word can be found in any field)
+        word_condition = word_conditions[0]
+        for cond in word_conditions[1:]:
+            word_condition = word_condition | cond
+        conditions.append(word_condition)
+
+    # Combine all words with AND logic
+    final_condition = conditions[0]
+    for cond in conditions[1:]:
+        final_condition = final_condition & cond
+
     return table.search(final_condition)
 
 @st.cache_resource()
@@ -125,9 +92,6 @@ def display_paper(paper):
             with col3:
                 st.markdown(f"*ID:* {paper.get('id', 'N/A')}")
             
-            if paper.get('keywords'):
-                st.markdown("*Keywords:* " + " • ".join(paper.get('keywords')))
-
             display_elements(paper)
 
 def display_save_status_and_title(paper):
@@ -143,7 +107,6 @@ def display_save_status_and_title(paper):
             'authors': paper.get('authors', []),
             'doi': paper.get('doi', ''),
             'abstract': paper.get('abstract', ''),
-            'keywords': paper.get('keywords', []),
             'problem': paper.get('problem', ''),
             'problem owner': paper.get('problem owner', ''),
             'approach': paper.get('approach', ''),
@@ -232,23 +195,15 @@ def app():
     # Load data
     db = TinyDB(DATABASE)
     all_papers = db.table("metadata").all()
-    all_keywords = get_all_keywords(all_papers)
-    
+
     # Search interface
     search_terms = st.sidebar.text_input("Search papers:", placeholder="Enter search terms...")
-    
-    # Keyword selection
-    selected_keywords = st.sidebar.multiselect(
-        "Filter by keywords:",
-        options=all_keywords,
-        placeholder="Select keywords to filter by..."
-    )
-    
+
     # Display saved papers in sidebar
     display_saved_papers()
-    
+
     # Filter papers
-    filtered_papers = search_papers(db, search_terms, selected_keywords)
+    filtered_papers = search_papers(db, search_terms)
 
     # Merge with abstract elements
     for paper in filtered_papers:
@@ -264,12 +219,10 @@ def app():
         for paper in filtered_papers:
             display_paper(paper)
     else:
-        if search_terms or selected_keywords:
+        if search_terms.strip():
             st.info("No papers found matching your search criteria.")
-        elif not search_terms and not selected_keywords:
-            st.info("No search criteria provided.")
         else:
-            st.info("No papers in database.")
+            st.info("No search criteria provided.")
 
 if __name__ == "__main__":
     app()
