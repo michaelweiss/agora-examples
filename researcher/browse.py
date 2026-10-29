@@ -2,9 +2,9 @@ import streamlit as st
 from tinydb import TinyDB, where
 import re
 import json
+import os
 
 DATABASE = "db/papers.json"
-PAGE_SIZE = 20
 
 def get_all_keywords(papers):
     """Extract all unique keywords from papers"""
@@ -73,10 +73,27 @@ def search_papers(_db, search_terms="", selected_keywords=None):
     
     return table.search(final_condition)
 
-def get_abstract(_db, paper_id):
+@st.cache_resource()
+def load_abstracts(path, mtime):
+    """Read the abstracts table ONCE and index it by paper id"""
+    db = TinyDB(path)
+    try:
+        return { row.get("id"): row for row in db.table("abstracts").all() }
+    finally:
+        db.close()
+
+def get_abstract(paper_id):
     """Retrieve abstract elements for a given paper"""
-    abstracts_table = _db.table("abstracts")
-    return abstracts_table.get(where("id") == paper_id)
+    # TinyDB re-parses the whole JSON file on every query, so looking up
+    # papers one at a time is very slow. So instead of this:
+    #
+    # abstracts_table = _db.table("abstracts")
+    # return abstracts_table.get(where("id") == paper_id)
+    #
+    # we load all abstracts once and then look up the paper by its id.
+
+    abstracts = load_abstracts(DATABASE, os.path.getmtime(DATABASE))
+    return abstracts.get(paper_id)
 
 def get_authors(paper):
     """Helper function to format authors list"""
@@ -235,7 +252,7 @@ def app():
 
     # Merge with abstract elements
     for paper in filtered_papers:
-        abstract_data = get_abstract(db, paper.get("id"))
+        abstract_data = get_abstract(paper.get("id"))
         if abstract_data:
             paper.update(abstract_data)
     
