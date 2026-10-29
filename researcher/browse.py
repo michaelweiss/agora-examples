@@ -4,6 +4,8 @@ import os
 
 DATABASE = "db/papers.json"
 
+PAGE_SIZE = 50
+
 SEARCH_FIELDS = ('id', 'title', 'authors', 'abstract')
 
 def search_papers(search_terms=""):
@@ -46,6 +48,40 @@ def get_authors(paper):
         return str(author)
     authors = [guess_author(author) for author in paper.get('authors', [])]
     return ', '.join(authors)
+
+def paginate(items, query):
+    """Show |< < > >| controls and return the slice of items for the current page.
+
+    The current page is kept in st.session_state and goes back to the first
+    page whenever `query` changes. Call this where the controls should appear.
+    """
+    n_pages = max(1, -(-len(items) // PAGE_SIZE))  # ceiling division
+
+    if st.session_state.get("page_query") != query:
+        st.session_state.page_query = query
+        st.session_state.page = 0
+    page = min(st.session_state.get("page", 0), n_pages - 1)
+    st.session_state.page = page
+
+    def go_to(new_page):  # button callback: runs before the script reruns
+        st.session_state.page = new_page
+
+    if n_pages > 1:
+        first, prev, nxt, last, info = st.columns([1, 1, 1, 1, 8])
+        first.button("|<", key="page_first", help="First page",
+                     on_click=go_to, args=(0,), disabled=page == 0)
+        prev.button("<", key="page_prev", help="Previous page",
+                    on_click=go_to, args=(page - 1,), disabled=page == 0)
+        nxt.button(">", key="page_next", help="Next page",
+                   on_click=go_to, args=(page + 1,), disabled=page == n_pages - 1)
+        last.button(">|", key="page_last", help="Last page",
+                    on_click=go_to, args=(n_pages - 1,), disabled=page == n_pages - 1)
+
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, len(items))
+    if n_pages > 1:
+        info.caption(f"Showing {start + 1}–{end} of {len(items)}")
+    return items[start:end]
 
 def display_paper(paper):
     """Display a single paper's metadata"""
@@ -169,16 +205,14 @@ def app():
         filtered_papers = search_papers(search_terms)
         st.markdown(f"Found **{len(filtered_papers)}** papers matching your search.")
 
-        # Merge with abstract elements
-        for paper in filtered_papers:
-            abstract_data = get_abstract(paper.get("id"))
-            if abstract_data:
-                paper.update(abstract_data)
-        
-        # Display papers
+        # Display papers, one page at a time
         if filtered_papers:
-            for paper in filtered_papers:
-                # st.markdown(f"{paper.get('title', 'Untitled')}")
+            query = " ".join(search_terms.lower().split())
+            for paper in paginate(filtered_papers, query):
+                # Merge with abstract elements (only for papers being shown)
+                abstract_data = get_abstract(paper.get("id"))
+                if abstract_data:
+                    paper.update(abstract_data)
                 display_paper(paper)
         else:
             if search_terms.strip():
