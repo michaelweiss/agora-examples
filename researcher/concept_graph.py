@@ -125,8 +125,8 @@ class ConceptGraph:
             'avg_cluster_size': np.mean([len(docs) for cid, docs in self.cluster_docs.items() if cid != -1]) if num_clusters > 0 else 0
         }
 
-    def visualize_graph_cytoscape(self):
-        """Visualize the graph using st-cytoscape."""
+    def visualize_graph(self):
+        """Visualize the graph."""
         stylesheet = [
             {
                 "selector": "node", 
@@ -146,7 +146,7 @@ class ConceptGraph:
             },
         ]
 
-        elements = self.networkx_to_cytoscape(self.graph)
+        elements = self.to_cytoscape(self.graph)
 
         layout = {
             "name": "fcose",  # Use a force-directed layout for cytoscape
@@ -158,8 +158,8 @@ class ConceptGraph:
         return cytoscape(elements, stylesheet, layout=layout, key="graph", 
             min_zoom=1/2, max_zoom=2, height="400px")
     
-    def networkx_to_cytoscape(self, G):
-        """Convert a NetworkX graph to Cytoscape elements."""
+    def to_cytoscape(self, G):
+        """Convert the graph to cytoscape elements."""
         elements = []
 
         for node in G.nodes():
@@ -226,3 +226,12 @@ class ConceptGraph:
         self.cluster_themes[cluster_id] = response
 
         return response
+
+def default_min_cluster_size(n):
+    """Default minimum cluster size for n documents.
+
+    Scales with sqrt(n). Since the dataset is heterogeneous, keep this low:
+    for ~1000 documents, a min_cluster_size of ~5 is reasonable.
+    min_samples defaults to about 1/2 of min_cluster_size.
+    """
+    return max(2, min(10, int(np.sqrt(n) / 6)))

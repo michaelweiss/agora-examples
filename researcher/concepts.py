@@ -4,7 +4,7 @@ from sklearn.decomposition import PCA
 from tinydb import TinyDB, where
 
 from agora.embedding import EmbeddingModel, SentenceTransformerModel
-from concept_graph import ConceptGraph
+from concept_graph import ConceptGraph, default_min_cluster_size
 
 DATABASE = "db/papers.json"
 
@@ -26,14 +26,16 @@ def search_papers(search_terms):
 
     return documents, sources
 
-def default_min_cluster_size(n):
-    """Default minimum cluster size for n documents.
+def generate_embeddings(documents):
+    # Generate embeddings
+    embedding_model = SentenceTransformerModel()
+    embeddings = embedding_model.encode(documents)
 
-    Scales with sqrt(n). Since the dataset is heterogeneous, keep this low:
-    for ~1000 documents, a min_cluster_size of ~5 is reasonable.
-    min_samples defaults to about 1/2 of min_cluster_size.
-    """
-    return max(2, min(10, int(np.sqrt(n) / 6)))
+    # Apply PCA for dimensionality reduction
+    n_components = min(30, len(embeddings))
+    pca = PCA(n_components=n_components)
+    embeddings = pca.fit_transform(embeddings)
+    return embeddings
 
 def main():
     st.set_page_config(page_title="Concepts", layout="wide")
@@ -85,16 +87,8 @@ def main():
             st.error("Please provide at least 2 documents")
         else:
             with st.spinner("Building concept graph..."):
-                embedding_model = SentenceTransformerModel()
-
                 # Generate embeddings
-                # Only do this if necessary (ie, not cached or saved to file)
-                embeddings = embedding_model.encode(documents)
-
-                # Apply PCA for dimensionality reduction
-                n_components = min(30, len(embeddings))
-                pca = PCA(n_components=n_components)
-                embeddings = pca.fit_transform(embeddings)
+                embeddings = generate_embeddings(documents)
 
                 # Create concept graph
                 cg = ConceptGraph()
@@ -128,7 +122,7 @@ def main():
 
         # Visualization
         with col_left:
-            selected = cg.visualize_graph_cytoscape()
+            selected = cg.visualize_graph()
 
         # Concept details
         with col_right:
